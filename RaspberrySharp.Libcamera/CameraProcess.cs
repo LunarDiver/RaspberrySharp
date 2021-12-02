@@ -78,14 +78,31 @@ internal class CameraProcess : IDataProcess
     }
 
     /// <inheritdoc />
-    public async Task GetContinuousStandardDataAsync(Action<byte[]> data)
+    public async Task GetContinuousStandardDataAsync(Action<byte[]> data, CancellationToken cancellation)
     {
-        throw new NotImplementedException();
+        await GetContinuousStandardDataAsync(string.Empty, data, cancellation);
     }
 
     /// <inheritdoc />
-    public Task GetContinuousStandardDataAsync(string args, Action<byte[]> data)
+    public async Task GetContinuousStandardDataAsync(string args, Action<byte[]> data, CancellationToken cancellation)
     {
-        throw new NotImplementedException();
+        Process proc = GetDefaultProcess(args);
+        proc.Start();
+        Stream output = proc.StandardOutput.BaseStream;
+
+        long lastLength = 0;
+        do
+        {
+            if(lastLength != output.Length)
+            {
+                lastLength = output.Length;
+                byte[] newData = new byte[output.Length];
+                output.Read(newData);
+                data(newData);
+            }
+
+            // ReSharper disable once MethodSupportsCancellation
+            await Task.Delay(100);
+        } while(!cancellation.IsCancellationRequested);
     }
 }
