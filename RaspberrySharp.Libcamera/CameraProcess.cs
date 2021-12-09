@@ -10,7 +10,7 @@ internal class CameraProcess : Process, IDataProcess, IDisposable
 
     public bool AllowIncompleteData { get; set; }
 
-    public new BinaryReader StandardOutput { get; }
+    public new Lazy<BinaryReader> StandardOutput { get; }
 
     protected const string ProcessPath = "libcamera-still";
 
@@ -25,14 +25,14 @@ internal class CameraProcess : Process, IDataProcess, IDisposable
     public CameraProcess()
     {
         StartInfo = _startInfo;
-        StandardOutput = new BinaryReader(base.StandardOutput.BaseStream, Encoding.Default, true);
+        StandardOutput = new Lazy<BinaryReader>(() => new BinaryReader(base.StandardOutput.BaseStream, Encoding.Default, true));
     }
 
     public CameraProcess(string args)
     {
         StartInfo = _startInfo;
         StartInfo.Arguments = args;
-        StandardOutput = new BinaryReader(base.StandardOutput.BaseStream, Encoding.Default, true);
+        StandardOutput = new Lazy<BinaryReader>(() => new BinaryReader(base.StandardOutput.BaseStream, Encoding.Default, true));
     }
 
     /// <inheritdoc />
@@ -41,10 +41,10 @@ internal class CameraProcess : Process, IDataProcess, IDisposable
         if(!HasExited && !AllowIncompleteData)
             throw new InvalidOperationException("Process did not exit yet. Data may be incomplete.");
 
-        byte[] data = StandardOutput.ReadBytes((int)StandardOutput.BaseStream.Length);
+        byte[] data = StandardOutput.Value.ReadBytes((int)StandardOutput.Value.BaseStream.Length);
 
-        if(StandardOutput.BaseStream.CanSeek)
-            StandardOutput.BaseStream.Seek(0, SeekOrigin.Begin);
+        if(StandardOutput.Value.BaseStream.CanSeek)
+            StandardOutput.Value.BaseStream.Seek(0, SeekOrigin.Begin);
 
         return data;
     }
@@ -58,12 +58,12 @@ internal class CameraProcess : Process, IDataProcess, IDisposable
         long lastLength = 0;
         do
         {
-            long currLength = StandardOutput.BaseStream.Length;
+            long currLength = StandardOutput.Value.BaseStream.Length;
             if (lastLength != currLength)
             {
-                byte[] newData = StandardOutput.ReadBytes((int)(currLength - lastLength));
+                byte[] newData = StandardOutput.Value.ReadBytes((int)(currLength - lastLength));
                 data(newData);
-                lastLength = StandardOutput.BaseStream.Length;
+                lastLength = StandardOutput.Value.BaseStream.Length;
             }
 
             // ReSharper disable once MethodSupportsCancellation
@@ -73,7 +73,15 @@ internal class CameraProcess : Process, IDataProcess, IDisposable
 
     public new void Dispose()
     {
+        try
+        {
+            StandardOutput.Value.Dispose();
+        }
+        catch(InvalidOperationException)
+        {
+            //Ignore, process didn't start
+        }
+        
         base.Dispose();
-        StandardOutput.Dispose();
     }
 }
