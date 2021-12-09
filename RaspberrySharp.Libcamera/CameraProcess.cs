@@ -1,108 +1,79 @@
 ﻿using System.Diagnostics;
+using System.Text;
 
 namespace RaspberrySharp.Libcamera;
 
-internal class CameraProcess : IDataProcess
+internal class CameraProcess : Process, IDataProcess, IDisposable
 {
     /// <inheritdoc />
     public string Path { get; } = "libcamera-still";
 
-    /// <inheritdoc />
-    public Process GetDefaultProcess()
+    public bool AllowIncompleteData { get; set; }
+
+    public new BinaryReader StandardOutput { get; }
+
+    protected const string ProcessPath = "libcamera-still";
+
+    private readonly ProcessStartInfo _startInfo = new ProcessStartInfo
     {
-        return GetDefaultProcess(string.Empty);
+        FileName = ProcessPath,
+        CreateNoWindow = true,
+        ErrorDialog = false,
+        RedirectStandardOutput = true
+    };
+
+    public CameraProcess()
+    {
+        StartInfo = _startInfo;
+        StandardOutput = new BinaryReader(base.StandardOutput.BaseStream, Encoding.Default, true);
     }
 
-    /// <inheritdoc />
-    public Process GetDefaultProcess(string args)
+    public CameraProcess(string args)
     {
-        return new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = Path,
-                Arguments = args,
-                CreateNoWindow = true,
-                ErrorDialog = false,
-                RedirectStandardOutput = true
-            }
-        };
+        StartInfo = _startInfo;
+        StartInfo.Arguments = args;
+        StandardOutput = new BinaryReader(base.StandardOutput.BaseStream, Encoding.Default, true);
     }
 
     /// <inheritdoc />
     public byte[] GetStandardData()
     {
-        return GetStandardData(string.Empty);
-    }
+        if(!HasExited && !AllowIncompleteData)
+            throw new InvalidOperationException("Process did not exit yet. Data may be incomplete.");
 
-    /// <inheritdoc />
-    public byte[] GetStandardData(string args)
-    {
-        TimeSpan timeout = TimeSpan.FromSeconds(5);
+        byte[] data = StandardOutput.ReadBytes((int)StandardOutput.BaseStream.Length);
 
-        Process proc = GetDefaultProcess(args);
-        proc.Start();
-        bool closed = proc.WaitForExit((int)timeout.TotalMilliseconds);
+        if(StandardOutput.BaseStream.CanSeek)
+            StandardOutput.BaseStream.Seek(0, SeekOrigin.Begin);
 
-        if(!closed)
-            throw new TimeoutException($"Process did not exit after {timeout.TotalSeconds} seconds.");
-
-        using var stream = new MemoryStream(new byte[proc.StandardOutput.BaseStream.Length]);
-        proc.StandardOutput.BaseStream.CopyTo(stream);
-
-        return stream.ToArray();
-    }
-
-    /// <inheritdoc />
-    public async Task<byte[]> GetStandardDataAsync()
-    {
-        return await GetStandardDataAsync(string.Empty);
-    }
-
-    /// <inheritdoc />
-    public async Task<byte[]> GetStandardDataAsync(string args)
-    {
-        TimeSpan timeout = TimeSpan.FromSeconds(5);
-
-        Process proc = GetDefaultProcess(args);
-        proc.Start();
-        bool closed = proc.WaitForExit((int)timeout.TotalMilliseconds);
-
-        if(!closed)
-            throw new TimeoutException($"Process did not exit after {timeout.TotalSeconds} seconds.");
-
-        await using var stream = new MemoryStream(new byte[proc.StandardOutput.BaseStream.Length]);
-        await proc.StandardOutput.BaseStream.CopyToAsync(stream);
-
-        return stream.ToArray();
+        return data;
     }
 
     /// <inheritdoc />
     public async Task GetContinuousStandardDataAsync(Action<byte[]> data, CancellationToken cancellation)
     {
-        await GetContinuousStandardDataAsync(string.Empty, data, cancellation);
-    }
-
-    /// <inheritdoc />
-    public async Task GetContinuousStandardDataAsync(string args, Action<byte[]> data, CancellationToken cancellation)
-    {
-        Process proc = GetDefaultProcess(args);
-        proc.Start();
-        Stream output = proc.StandardOutput.BaseStream;
+        if(!AllowIncompleteData)
+            throw new InvalidOperationException($"You must enable {nameof(AllowIncompleteData)} in order to read continuous data.");
 
         long lastLength = 0;
         do
         {
-            if(lastLength != output.Length)
+            long currLength = StandardOutput.BaseStream.Length;
+            if (lastLength != currLength)
             {
-                lastLength = output.Length;
-                byte[] newData = new byte[output.Length];
-                output.Read(newData);
+                byte[] newData = StandardOutput.ReadBytes((int)(currLength - lastLength));
                 data(newData);
+                lastLength = StandardOutput.BaseStream.Length;
             }
 
             // ReSharper disable once MethodSupportsCancellation
             await Task.Delay(100);
-        } while(!cancellation.IsCancellationRequested);
+        } while (!cancellation.IsCancellationRequested && !HasExited);
+    }
+
+    public new void Dispose()
+    {
+        base.Dispose();
+        StandardOutput.Dispose();
     }
 }
