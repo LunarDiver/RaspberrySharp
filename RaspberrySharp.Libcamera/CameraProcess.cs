@@ -3,14 +3,14 @@ using System.Text;
 
 namespace RaspberrySharp.Libcamera;
 
-internal class CameraProcess : Process, IDataProcess, IDisposable
+internal class CameraProcess : Process, IDataProcess
 {
     /// <inheritdoc />
     public string Path { get; } = "libcamera-still";
 
     public bool AllowIncompleteData { get; set; }
 
-    public new Lazy<BinaryReader> StandardOutput { get; }
+    public new Stream StandardOutput { get; }
 
     protected const string ProcessPath = "libcamera-still";
 
@@ -25,14 +25,14 @@ internal class CameraProcess : Process, IDataProcess, IDisposable
     public CameraProcess()
     {
         StartInfo = _startInfo;
-        StandardOutput = new Lazy<BinaryReader>(() => new BinaryReader(base.StandardOutput.BaseStream, Encoding.Default, true));
+        StandardOutput = base.StandardOutput.BaseStream;
     }
 
     public CameraProcess(string args)
     {
         StartInfo = _startInfo;
         StartInfo.Arguments = args;
-        StandardOutput = new Lazy<BinaryReader>(() => new BinaryReader(base.StandardOutput.BaseStream, Encoding.Default, true));
+        StandardOutput = base.StandardOutput.BaseStream;
     }
 
     /// <inheritdoc />
@@ -41,47 +41,37 @@ internal class CameraProcess : Process, IDataProcess, IDisposable
         if(!HasExited && !AllowIncompleteData)
             throw new InvalidOperationException("Process did not exit yet. Data may be incomplete.");
 
-        byte[] data = StandardOutput.Value.ReadBytes((int)StandardOutput.Value.BaseStream.Length);
+        using var memory = new MemoryStream();
+        StandardOutput.CopyTo(memory);
 
-        if(StandardOutput.Value.BaseStream.CanSeek)
-            StandardOutput.Value.BaseStream.Seek(0, SeekOrigin.Begin);
-
-        return data;
+        return memory.ToArray();
     }
 
     /// <inheritdoc />
-    public async Task GetContinuousStandardDataAsync(Action<byte[]> data, CancellationToken cancellation)
+    public async Task GetContinuousStandardDataAsync(Action<byte> data, CancellationToken cancellation)
     {
         if(!AllowIncompleteData)
             throw new InvalidOperationException($"You must enable {nameof(AllowIncompleteData)} in order to read continuous data.");
 
-        long lastLength = 0;
+        //long lastLength = 0;
+        int newData;
         do
         {
-            long currLength = StandardOutput.Value.BaseStream.Length;
-            if (lastLength != currLength)
-            {
-                byte[] newData = StandardOutput.Value.ReadBytes((int)(currLength - lastLength));
-                data(newData);
-                lastLength = StandardOutput.Value.BaseStream.Length;
-            }
+            newData = StandardOutput.ReadByte();
+
+            if(newData != -1)
+                data((byte)newData);
+
+            //long currLength = StandardOutput.Value.BaseStream.Length;
+            //if (lastLength != currLength)
+            //{
+            //    byte[] newData = StandardOutput.Value.ReadBytes((int)(currLength - lastLength));
+            //    data(newData);
+            //    lastLength = StandardOutput.Value.BaseStream.Length;
+            //}
 
             // ReSharper disable once MethodSupportsCancellation
-            await Task.Delay(100);
-        } while (!cancellation.IsCancellationRequested && !HasExited);
-    }
-
-    public new void Dispose()
-    {
-        try
-        {
-            StandardOutput.Value.Dispose();
-        }
-        catch(InvalidOperationException)
-        {
-            //Ignore, process didn't start
-        }
-        
-        base.Dispose();
+            await Task.Delay(1);
+        } while (!cancellation.IsCancellationRequested && newData != -1);
     }
 }
