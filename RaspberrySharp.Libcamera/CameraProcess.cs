@@ -10,7 +10,7 @@ internal class CameraProcess : Process, IDataProcess
 
     public bool AllowIncompleteData { get; set; }
 
-    public new Stream StandardOutput { get; }
+    public new Lazy<Stream> StandardOutput { get; }
 
     protected const string ProcessPath = "libcamera-still";
 
@@ -25,14 +25,14 @@ internal class CameraProcess : Process, IDataProcess
     public CameraProcess()
     {
         StartInfo = _startInfo;
-        StandardOutput = base.StandardOutput.BaseStream;
+        StandardOutput = new Lazy<Stream>(() => base.StandardOutput.BaseStream);
     }
 
     public CameraProcess(string args)
     {
         StartInfo = _startInfo;
         StartInfo.Arguments = args;
-        StandardOutput = base.StandardOutput.BaseStream;
+        StandardOutput = new Lazy<Stream>(() => base.StandardOutput.BaseStream);
     }
 
     /// <inheritdoc />
@@ -42,7 +42,7 @@ internal class CameraProcess : Process, IDataProcess
             throw new InvalidOperationException("Process did not exit yet. Data may be incomplete.");
 
         using var memory = new MemoryStream();
-        StandardOutput.CopyTo(memory);
+        StandardOutput.Value.CopyTo(memory);
 
         return memory.ToArray();
     }
@@ -57,7 +57,7 @@ internal class CameraProcess : Process, IDataProcess
         int newData;
         do
         {
-            newData = StandardOutput.ReadByte();
+            newData = StandardOutput.Value.ReadByte();
 
             if(newData != -1)
                 data((byte)newData);
