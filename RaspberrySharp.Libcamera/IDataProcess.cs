@@ -8,5 +8,5 @@ internal interface IDataProcess
 
     public byte[] GetStandardData();
 
-    public Task GetContinuousStandardDataAsync(Action<byte[]> data, CancellationToken cancellation);
+    public Task GetContinuousStandardDataAsync(Action<byte> data, CancellationToken cancellation);
 }
